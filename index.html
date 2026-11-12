@@ -3,14 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
-    <meta name="theme-color" content="#6f2430" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#3d1820" media="(prefers-color-scheme: dark)" />
-    <meta name="description" content="Fawlty Messages sends direct messages and group chats through ntfy.sh. Each device gets a code." />
+    <meta name="theme-color" content="#111214" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0c0d10" media="(prefers-color-scheme: dark)" />
+    <meta name="description" content="Lockbox sends direct messages, group chats, and calls. Each device gets a code." />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Fawlty Messages" />
-    <title>Fawlty Messages</title>
+    <meta name="apple-mobile-web-app-title" content="Lockbox" />
+    <title>Lockbox</title>
     <link rel="manifest" href="manifest.json" />
     <link rel="icon" href="icon-192.png" type="image/png" />
     <link rel="apple-touch-icon" href="apple-touch-icon.png" />
@@ -20,12 +20,12 @@
     <div class="app">
       <section id="view-list" class="view">
         <header class="top">
-          <h1><span class="mark">Fawlty</span><small>Messages</small></h1>
+          <h1><span class="mark">Lockbox</span></h1>
           <span id="dot" class="dot" title="Connecting"></span>
           <button type="button" class="icon-btn primary" data-action="new" data-icon="plus" aria-label="New chat"></button>
         </header>
         <div id="install" class="install" hidden>
-          <p>Install Fawlty Messages on this phone.</p>
+          <p>Install Lockbox on this phone.</p>
           <button type="button" class="btn" data-action="install-go">Install</button>
           <button type="button" class="icon-btn" data-action="install-hide" data-icon="close" aria-label="Dismiss"></button>
         </div>
@@ -54,6 +54,8 @@
             <strong id="chat-name"></strong>
             <small id="chat-sub"></small>
           </button>
+          <button type="button" class="icon-btn" data-action="call" data-icon="phone" aria-label="Call"></button>
+          <button type="button" class="icon-btn fire" data-action="fire" data-icon="fire" aria-label="Fire"></button>
           <button type="button" class="icon-btn" data-action="chat-menu" data-icon="menu" aria-label="Chat options"></button>
         </header>
         <div id="log"></div>
@@ -66,6 +68,7 @@
             <button type="button" id="act-copy" data-action="copy-msg">Copy</button>
             <button type="button" id="act-retry" data-action="retry-pick" hidden>Retry</button>
             <button type="button" id="act-quote" data-action="jump-quote" hidden>Show quoted</button>
+            <button type="button" id="act-more" data-action="select-more">More</button>
             <button type="button" id="act-delete" data-action="delete-me">Delete for me</button>
             <button type="button" id="act-delete-all" data-action="delete-all">Delete for everyone</button>
           </div>
@@ -76,6 +79,12 @@
             <span id="reply-text"></span>
           </div>
           <button type="button" class="icon-btn" data-action="cancel-reply" data-icon="close" aria-label="Cancel reply"></button>
+        </div>
+        <div id="selectbar" class="selectbar" hidden>
+          <button type="button" data-action="select-cancel">Cancel</button>
+          <strong id="select-count">0 selected</strong>
+          <button type="button" id="select-delete-all" data-action="select-delete-all" hidden>Delete for everyone</button>
+          <button type="button" data-action="select-delete">Delete</button>
         </div>
         <div id="emoji-panel" class="emoji-panel" hidden></div>
         <form id="composer" class="composer">
@@ -102,9 +111,22 @@
           <div id="sheet-body"></div>
         </div>
       </div>
+      <div id="call" class="call" hidden>
+        <div class="call-card">
+          <strong id="call-name"></strong>
+          <p id="call-status"></p>
+          <div class="call-actions">
+            <button type="button" id="call-mute" data-action="call-mute" hidden>Mute</button>
+            <button type="button" id="call-decline" class="call-no" data-action="call-decline">Decline</button>
+            <button type="button" id="call-answer" class="call-yes" data-action="call-answer">Answer</button>
+            <button type="button" id="call-hangup" class="call-no" data-action="call-hangup">End</button>
+          </div>
+        </div>
+      </div>
+      <audio id="call-audio" autoplay playsinline></audio>
       <div id="toast" class="toast" role="status" hidden></div>
     </div>
-    <noscript>Fawlty Messages needs JavaScript to send and receive chats.</noscript>
+    <noscript>Lockbox needs JavaScript to send and receive chats.</noscript>
     <script src="app.js"></script>
   </body>
 </html>

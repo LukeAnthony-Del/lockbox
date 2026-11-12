@@ -1,4 +1,4 @@
-/* Fawlty Messages
+/* Lockbox
    Each device listens on ntfy topic fawlty-u-CODE.
    Direct messages are published to the other person's topic.
    Each group uses fawlty-g-CODE. Members publish there once.
@@ -12,7 +12,8 @@
   const GROUP_PREFIX = "fawlty-g-";
   const REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
   const EMOJIS = ["😀", "😁", "😂", "🤣", "😊", "😍", "😘", "😭", "👍", "👎", "❤️", "🔥", "🎉", "🙏", "😮", "😢", "😎", "🤝", "✅", "👀", "💯", "🏨", "🔔", "☕"];
-  const PALETTE = ["#6f2430", "#3e5c4b", "#3d4f6f", "#6a4b3a", "#6e3d4a", "#3e5d57", "#5c5340", "#2f4a44"];
+  const PALETTE = ["#111214", "#3b4a6b", "#2f6f5e", "#6b4a3a", "#5c3d55", "#3d5a4a", "#4a5568", "#1f3a4d"];
+  const VAPID_KEY = "BEMjM0sNxh41x0a6Lz3YaqkJ7AUhZefxsOQgw-at69i0fM1CybVBcj7-QQXf4N_tPCgFnOXdRbQ5jrSrr9Yg9Lc";
   const ICONS = {
     back: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5 8 12l7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
@@ -20,6 +21,8 @@
     send: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h12M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     emoji: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M9 10.2h.01M15 10.2h.01M8.8 14.2c.8 1.2 2 1.8 3.2 1.8s2.4-.6 3.2-1.8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
     close: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+    phone: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4.6h2.1l1 2.8-1.5 1a10.5 10.5 0 0 0 4.9 4.9l1-1.5 2.8 1V15a1.5 1.5 0 0 1-1.6 1.5A12.4 12.4 0 0 1 6.5 6.2 1.5 1.5 0 0 1 8 4.6z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>',
+    fire: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.4c.2 2.4-.4 3.8-1.4 5 1.8-.3 3.6.7 3.6 3 0 2.6-2 4.6-4.6 4.6S5 14 5 11.4c0-1.5.7-2.7 1.6-3.6.2 1.2.9 2 1.7 2.3C9.2 8.4 10 6.2 12 3.4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>',
   };
 
   const $ = (id) => document.getElementById(id);
@@ -46,6 +49,11 @@
   let pressX = 0;
   let pressY = 0;
   let suppressClick = false;
+  let selecting = false;
+  let selected = new Set();
+  let call = null;
+  let callClock = 0;
+  let pushTimer = 0;
 
   function el(tag, attrs, children) {
     const node = document.createElement(tag);
@@ -184,6 +192,7 @@
     chat.pin = !!chat.pin;
     chat.mute = !!chat.mute;
     chat.readUptoTs = chat.readUptoTs || 0;
+    chat.burnedAt = chat.burnedAt || 0;
     chat.messages.forEach((msg) => {
       msg.reactions = msg.reactions || {};
       if (msg.hidden == null) msg.hidden = false;
@@ -272,6 +281,10 @@
   function insertMessage(chat, msg) {
     if (!msg || !msg.id || hasId(msg.id)) return false;
     msg.ts = ms(msg.ts);
+    if (chat.burnedAt && msg.ts <= chat.burnedAt) {
+      markSeen(msg.id);
+      return false;
+    }
     let i = 0;
     while (i < chat.messages.length && chat.messages[i].ts <= msg.ts) i += 1;
     chat.messages.splice(i, 0, msg);
@@ -286,7 +299,7 @@
   }
 
   function titleOf(chat) {
-    if (!chat) return "Fawlty Messages";
+    if (!chat) return "Lockbox";
     if (chat.nick) return chat.nick;
     if (chat.kind === "group") return chat.gname || "Group";
     return chat.peerName || pretty(chat.code);
@@ -510,6 +523,7 @@ function mergeMembers(chat, list, ts) {
       case "remove":
       case "kick": return applyRemove(p);
       case "rename": return applyRename(p);
+      case "call": return applyCall(p);
       default: return null;
     }
   }
@@ -757,6 +771,43 @@ function mergeMembers(chat, list, ts) {
     return fresh ? { changed: true, chatId: chat.id } : null;
   }
 
+  function applyCall(p) {
+    if (!p.sid || seen.has(p.id)) return null;
+    markSeen(p.id);
+    if (p.from === state.me.code) return null;
+    const recent = Date.now() - ms(p.ts) < 60000;
+    if (p.op === "offer") {
+      if (!p.sdp || !recent) return null;
+      const chat = ensureDm(p.from, p.name);
+      if (call && call.sid !== p.sid && call.status !== "ended") {
+        sendCallOp(p.from, "busy", p.sid).catch(() => {});
+        return null;
+      }
+      call = { sid: p.sid, peer: p.from, name: p.name || pretty(p.from), dir: "in", status: "ringing", sdp: p.sdp };
+      showCall();
+      const note = document.visibilityState === "visible" ? null : {
+        chat, title: "Incoming call", body: (p.name || "Someone") + " is calling", tag: "call-" + p.sid,
+      };
+      return { changed: true, chatId: chat.id, note };
+    }
+    if (!call || call.sid !== p.sid) return null;
+    if (p.op === "answer" && p.sdp && call.pc) {
+      call.pc.setRemoteDescription({ type: "answer", sdp: p.sdp }).then(() => {
+        if (!call || call.sid !== p.sid) return;
+        call.status = "active";
+        call.started = Date.now();
+        clearTimeout(call.ringTimer);
+        showCall();
+        tickCall();
+      }).catch(() => { toast("The call couldn’t connect."); hangUp(); });
+      return null;
+    }
+    if (p.op === "busy") toast("They’re on another call.");
+    if (p.op === "reject") toast("Call declined.");
+    if (p.op === "bye" || p.op === "reject" || p.op === "busy") endCall(false);
+    return null;
+  }
+
   function ingest(topic, ntfy) {
     if (!ntfy || ntfy.event !== "message" || typeof ntfy.message !== "string") return null;
     if (typeof ntfy.time === "number") state.cursors[topic] = Math.max(state.cursors[topic] || 0, ntfy.time);
@@ -797,7 +848,7 @@ function mergeMembers(chat, list, ts) {
       err.status = 413;
       throw err;
     }
-    const title = (payload.name || "Fawlty").slice(0, 80);
+    const title = (payload.name || "Lockbox").slice(0, 80);
     const url = "https://ntfy.sh/" + encodeURIComponent(topic) + "?title=" + encodeURIComponent(title);
     let res;
     try {
@@ -1113,6 +1164,7 @@ function mergeMembers(chat, list, ts) {
     };
     publish(groupTopic(code), payload).catch(failToast);
     unique.forEach((item) => publish(userTopic(item), Object.assign({}, payload, { kind: "invite" })).catch(failToast));
+    schedulePush();
   }
 
   async function joinGroup(code) {
@@ -1151,6 +1203,7 @@ function mergeMembers(chat, list, ts) {
       persist();
       softRefresh();
     }
+    schedulePush();
   }
 
   async function leaveGroup(chat) {
@@ -1171,6 +1224,7 @@ function mergeMembers(chat, list, ts) {
     } catch (err) {
       toast("You left on this device. Couldn’t reach ntfy.sh, so the group may still include you.");
     }
+    schedulePush();
   }
 
   async function addMembers(chat, codes) {
@@ -1278,14 +1332,321 @@ function mergeMembers(chat, list, ts) {
     if (openId === id) openId = "";
     pickId = "";
     persist();
+    schedulePush();
     closeSheet();
     go("/");
+  }
+
+  function burnMessages(chat) {
+    chat.burnedAt = Date.now();
+    chat.messages = [];
+    chat.unread = 0;
+    chat.unreadMark = "";
+    selecting = false;
+    selected = new Set();
+    reply = null;
+    clearPick();
+    updateReplyBanner();
+    persist();
+    closeSheet();
+    if (currentRoute().name === "chat") renderLog(chat, "stick", false);
+    updateSelectBar();
+    toast("Messages deleted.");
+  }
+
+  function updateSelectBar() {
+    const bar = $("selectbar");
+    if (!bar) return;
+    bar.hidden = !selecting;
+    if (!selecting) return;
+    $("select-count").textContent = selected.size + " selected";
+    const chat = state.chats[openId];
+    const mine = chat && [...selected].every((id) => {
+      const msg = findMessage(chat, id);
+      return msg && msg.mine && !msg.deleted && !msg.system;
+    });
+    $("select-delete-all").hidden = !mine || !selected.size;
+    $("actions").hidden = true;
+  }
+
+  function beginSelect(id) {
+    selecting = true;
+    selected = new Set();
+    if (id) selected.add(id);
+    clearPick();
+    const chat = state.chats[openId];
+    if (chat) renderLog(chat, "auto", false);
+    updateSelectBar();
+  }
+
+  function toggleSelected(id) {
+    const chat = state.chats[openId];
+    const msg = chat && findMessage(chat, id);
+    if (!msg || msg.system || msg.hidden) return;
+    if (selected.has(id)) selected.delete(id);
+    else selected.add(id);
+    if (!selected.size) selecting = false;
+    if (chat) renderLog(chat, "auto", false);
+    updateSelectBar();
+  }
+
+  function selectedMessages(chat) {
+    return [...selected].map((id) => findMessage(chat, id)).filter(Boolean);
+  }
+
+  function waitIce(pc) {
+    if (pc.iceGatheringState === "complete") return Promise.resolve();
+    return new Promise((resolve) => {
+      const finish = () => {
+        pc.removeEventListener("icegatheringstatechange", onState);
+        clearTimeout(timer);
+        resolve();
+      };
+      const onState = () => { if (pc.iceGatheringState === "complete") finish(); };
+      pc.addEventListener("icegatheringstatechange", onState);
+      const timer = setTimeout(finish, 3500);
+    });
+  }
+
+  function fitSdp(sdp) {
+    let kept = 0;
+    const lines = String(sdp || "").split(/\r\n|\n/);
+    const trimmed = lines.filter((line) => {
+      if (!line.startsWith("a=candidate:")) return true;
+      kept += 1;
+      return kept <= 6;
+    });
+    return trimmed.join("\r\n");
+  }
+
+  function sendCallOp(code, op, sid, extra) {
+    const payload = Object.assign({
+      v: 1, kind: "call", id: uid(), from: state.me.code, name: myName(), ts: Date.now(),
+      to: code, op, sid,
+    }, extra || {});
+    if (payload.sdp) payload.sdp = fitSdp(payload.sdp);
+    return publish(userTopic(code), payload);
+  }
+
+  function showCall() {
+    const layer = $("call");
+    if (!call) { layer.hidden = true; return; }
+    layer.hidden = false;
+    $("call-name").textContent = call.name || pretty(call.peer);
+    const status = $("call-status");
+    if (call.status === "calling") status.textContent = "Calling…";
+    else if (call.status === "ringing") status.textContent = "Incoming call";
+    else if (call.status === "connecting") status.textContent = "Connecting…";
+    else status.textContent = call.started ? formatDuration(Date.now() - call.started) : "Connected";
+    const incoming = call.dir === "in" && call.status === "ringing";
+    $("call-answer").hidden = !incoming;
+    $("call-decline").hidden = !incoming;
+    $("call-hangup").hidden = incoming;
+    $("call-mute").hidden = incoming;
+    $("call-mute").textContent = call.muted ? "Unmute" : "Mute";
+  }
+
+  function formatDuration(msValue) {
+    const total = Math.max(0, Math.floor(msValue / 1000));
+    const min = Math.floor(total / 60);
+    const sec = String(total % 60).padStart(2, "0");
+    return min + ":" + sec;
+  }
+
+  function tickCall() {
+    clearInterval(callClock);
+    callClock = setInterval(() => {
+      if (!call || call.status !== "active") { clearInterval(callClock); return; }
+      showCall();
+    }, 1000);
+  }
+
+  function bindCall(pc) {
+    pc.ontrack = (event) => {
+      const audio = $("call-audio");
+      audio.srcObject = event.streams[0] || new MediaStream([event.track]);
+      audio.play().catch(() => {});
+      if (!call || call.pc !== pc) return;
+      call.status = "active";
+      if (!call.started) call.started = Date.now();
+      clearTimeout(call.ringTimer);
+      showCall();
+      tickCall();
+    };
+    pc.onconnectionstatechange = () => {
+      if (!call || call.pc !== pc) return;
+      if (pc.connectionState === "connected") {
+        call.status = "active";
+        if (!call.started) call.started = Date.now();
+        clearTimeout(call.ringTimer);
+        showCall();
+        tickCall();
+      }
+      if (pc.connectionState === "failed") {
+        toast("The call dropped.");
+        hangUp();
+      }
+    };
+  }
+
+  function endCall(sendBye) {
+    const current = call;
+    call = null;
+    clearInterval(callClock);
+    if (!current) { showCall(); return; }
+    clearTimeout(current.ringTimer);
+    if (sendBye && current.peer && current.sid) sendCallOp(current.peer, "bye", current.sid).catch(() => {});
+    if (current.pc) current.pc.close();
+    if (current.stream) current.stream.getTracks().forEach((track) => track.stop());
+    const audio = $("call-audio");
+    audio.srcObject = null;
+    showCall();
+  }
+
+  function hangUp() { endCall(true); }
+
+  async function placeCall(code, name) {
+    if (!isCode(code) || code === state.me.code) { toast("Choose someone else to call."); return; }
+    if (call) { toast("You’re already on a call."); return; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.RTCPeerConnection) {
+      toast("This browser can’t place a call.");
+      return;
+    }
+    closeSheet();
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false }); }
+    catch (e) { toast("Allow the microphone to call."); return; }
+    const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+    stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+    const sid = uid();
+    call = { sid, peer: code, name: name || pretty(code), dir: "out", status: "calling", pc, stream, muted: false };
+    bindCall(pc);
+    showCall();
+    try {
+      const offer = await pc.createOffer({ offerToReceiveAudio: true });
+      await pc.setLocalDescription(offer);
+      await waitIce(pc);
+      await sendCallOp(code, "offer", sid, { sdp: pc.localDescription.sdp });
+    } catch (err) {
+      endCall(false);
+      failToast(err);
+      return;
+    }
+    call.ringTimer = setTimeout(() => {
+      if (call && call.sid === sid && call.status === "calling") {
+        toast("No answer.");
+        hangUp();
+      }
+    }, 45000);
+  }
+
+  async function answerCall() {
+    if (!call || call.dir !== "in" || !call.sdp) return;
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false }); }
+    catch (e) { toast("Allow the microphone to answer."); return; }
+    const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+    stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+    call.pc = pc;
+    call.stream = stream;
+    call.status = "connecting";
+    call.muted = false;
+    bindCall(pc);
+    showCall();
+    try {
+      await pc.setRemoteDescription({ type: "offer", sdp: call.sdp });
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      await waitIce(pc);
+      await sendCallOp(call.peer, "answer", call.sid, { sdp: pc.localDescription.sdp });
+    } catch (err) {
+      endCall(false);
+      failToast(err);
+    }
+  }
+
+  function declineCall() {
+    if (call && call.peer && call.sid) sendCallOp(call.peer, "reject", call.sid).catch(() => {});
+    endCall(false);
+  }
+
+  function toggleMute() {
+    if (!call || !call.stream) return;
+    call.muted = !call.muted;
+    call.stream.getAudioTracks().forEach((track) => { track.enabled = !call.muted; });
+    showCall();
+  }
+
+  function openCall(chat) {
+    if (!chat || chat.closed) { toast("This chat is closed."); return; }
+    if (chat.kind === "dm") return placeCall(chat.code, titleOf(chat));
+    const people = (chat.members || []).filter((member) => member.code !== state.me.code);
+    if (!people.length) { toast("Add someone before calling."); return; }
+    const box = el("div", { class: "stack" });
+    people.forEach((member) => {
+      const label = member.name || pretty(member.code);
+      box.append(el("button", { type: "button", class: "btn ghost full", "data-action": "call-person", "data-code": member.code, "data-name": label }, label));
+    });
+    openSheet("Call", [box]);
+  }
+
+  function pushTopics() {
+    const topics = [userTopic(state.me.code)];
+    Object.values(state.chats).forEach((chat) => {
+      if (chat.kind === "group" && !chat.closed) topics.push(groupTopic(chat.code));
+    });
+    return topics.slice(0, 50);
+  }
+
+  function vapidKey() {
+    const padded = VAPID_KEY + "=".repeat((4 - (VAPID_KEY.length % 4)) % 4);
+    const raw = atob(padded.replace(/-/g, "+").replace(/_/g, "/"));
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    return bytes;
+  }
+
+  function pushMeta() {
+    if (!("serviceWorker" in navigator)) return;
+    const muted = Object.values(state.chats).filter((chat) => chat.mute).map((chat) => chat.id);
+    navigator.serviceWorker.ready.then((reg) => {
+      if (reg.active) reg.active.postMessage({ meta: { me: state.me.code, muted } });
+    }).catch(() => {});
+  }
+
+  async function syncWebPush() {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    if (!("Notification" in window) || Notification.permission !== "granted") return;
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: vapidKey() });
+    }
+    const json = sub.toJSON();
+    const res = await fetch("https://ntfy.sh/v1/webpush", {
+      method: "POST",
+      body: JSON.stringify({
+        endpoint: sub.endpoint,
+        auth: json.keys && json.keys.auth,
+        p256dh: json.keys && json.keys.p256dh,
+        topics: pushTopics(),
+      }),
+    });
+    if (!res.ok) throw new Error("push");
+  }
+
+  function schedulePush() {
+    clearTimeout(pushTimer);
+    pushTimer = setTimeout(() => {
+      pushMeta();
+      syncWebPush().catch(() => {});
+    }, 700);
   }
 
   async function notify(note) {
     if (!note || !note.chat || note.chat.mute || isWatching(note.chat.id)) return;
     if (!("Notification" in window) || Notification.permission !== "granted") return;
-    const opts = { body: note.body, icon: "icon-192.png", badge: "icon-192.png", tag: note.chat.id, renotify: true, data: { chatId: note.chat.id } };
+    const opts = { body: note.body, icon: "icon-192.png", badge: "icon-192.png", tag: note.tag || note.chat.id, renotify: true, data: { chatId: note.chat.id } };
     try {
       const reg = await navigator.serviceWorker.getRegistration();
       if (reg) await reg.showNotification(note.title, opts);
@@ -1496,7 +1857,9 @@ function mergeMembers(chat, list, ts) {
       if (chat.kind === "group" && !msg.mine && !tight) {
         wrap.append(el("div", { class: "sender", style: "color:" + colorFor(msg.from) }, msg.name || pretty(msg.from)));
       }
-      const bubble = el("div", { class: "bubble" + (msg.id === pickId ? " picked" : ""), tabindex: "0", role: "button", "data-action": "pick", "data-id": msg.id });
+      const marked = msg.id === pickId ? " picked" : "";
+      const chosen = selecting && selected.has(msg.id) ? " selected" : "";
+      const bubble = el("div", { class: "bubble" + marked + chosen, tabindex: "0", role: "button", "data-action": "pick", "data-id": msg.id });
       if (msg.fwd && !msg.deleted) bubble.append(el("span", { class: "fwd" }, "Forwarded"));
       if (msg.quote && !msg.deleted) {
         bubble.append(el("span", { class: "quote" }, [el("strong", null, msg.quote.name || "Reply"), msg.quote.text || ""]));
@@ -1566,13 +1929,15 @@ function mergeMembers(chat, list, ts) {
     const enter = openId !== id;
     if (enter) {
       pickId = "";
+      selecting = false;
+      selected = new Set();
       reply = null;
       if (!chat.unread) chat.unreadMark = "";
       chat.unread = 0;
       openId = id;
     }
     syncChrome(chat);
-    document.title = titleOf(chat) + " · Fawlty Messages";
+    document.title = titleOf(chat) + " · Lockbox";
     renderLog(chat, enter ? "stick" : "auto", false);
     if (enter) {
       $("draft").value = chat.draft || "";
@@ -1637,7 +2002,7 @@ function mergeMembers(chat, list, ts) {
     if (chat.kind === "group" && chat.closed) stack.append(el("button", { type: "button", class: "btn full", "data-action": "rejoin" }, "Join again"));
     stack.append(el("button", { type: "button", class: "btn danger full", "data-action": "delete-chat" }, "Delete chat"));
     info.append(stack);
-    document.title = titleOf(chat) + " · Fawlty Messages";
+    document.title = titleOf(chat) + " · Lockbox";
   }
 
   function render() {
@@ -1666,7 +2031,7 @@ function mergeMembers(chat, list, ts) {
   function titleCount() {
     let n = 0;
     Object.values(state.chats).forEach((chat) => { n += chat.unread || 0; });
-    return n ? "(" + n + ") Fawlty Messages" : "Fawlty Messages";
+    return n ? "(" + n + ") Lockbox" : "Lockbox";
   }
 
   function softRefresh() {
@@ -1718,6 +2083,7 @@ function mergeMembers(chat, list, ts) {
   }
 
   function pick(id) {
+    if (selecting) { toggleSelected(id); return; }
     const chat = state.chats[openId];
     const msg = chat && findMessage(chat, id);
     if (!msg || msg.system || msg.hidden) return;
@@ -1734,6 +2100,8 @@ function mergeMembers(chat, list, ts) {
     const bar = $("actions");
     const found = findPicked();
     document.querySelectorAll(".bubble.picked").forEach((node) => node.classList.remove("picked"));
+    if (selecting) { bar.hidden = true; updateSelectBar(); return; }
+    $("selectbar").hidden = true;
     if (!found) { bar.hidden = true; return; }
     bar.hidden = false;
     const node = document.querySelector('[data-mid="' + CSS.escape(found.msg.id) + '"] .bubble');
@@ -1783,7 +2151,7 @@ function mergeMembers(chat, list, ts) {
       ]),
       el("p", null, "Give this code to someone so they can message you. A group has its own code, which you share from the group."),
       el("p", null, "Messages go through ntfy.sh. Anyone who has a code can send to it, so share codes only with the people who should have them."),
-      el("p", null, "Keep Fawlty Messages open to see messages right away. Opening it later picks up messages still waiting on ntfy.sh, about 12 hours."),
+      el("p", null, "Turn on alerts, then install Lockbox, and a new message can notify this phone even when the app is closed. Opening it later still picks up messages waiting on ntfy.sh, about 12 hours."),
       el("p", null, "This code stays on this device. Clearing the browser’s site data gives you a new one."),
       el("button", { type: "button", class: "btn full", "data-action": "alerts" }, alerts),
     ]);
@@ -1864,11 +2232,11 @@ function mergeMembers(chat, list, ts) {
   }
 
   function myShareText() {
-    return "Message me on Fawlty Messages. My code is " + pretty(state.me.code);
+    return "Message me on Lockbox. My code is " + pretty(state.me.code);
   }
 
   function groupShareText(chat) {
-    return "Join " + titleOf(chat) + " on Fawlty Messages. Group code: " + pretty(chat.code);
+    return "Join " + titleOf(chat) + " on Lockbox. Group code: " + pretty(chat.code);
   }
 
   async function copyText(text, label) {
@@ -1892,7 +2260,10 @@ function mergeMembers(chat, list, ts) {
     if (!("Notification" in window)) { toast("This browser doesn’t show alerts."); return; }
     if (Notification.permission === "granted") { toast("Alerts are on."); return; }
     const result = await Notification.requestPermission();
-    toast(result === "granted" ? "Alerts are on." : "Alerts stay off until the browser allows them.");
+    if (result === "granted") {
+      toast("Alerts are on, including when Lockbox is closed.");
+      schedulePush();
+    } else toast("Alerts stay off until the browser allows them.");
     const btn = document.querySelector('[data-action="alerts"]');
     if (btn && result === "granted") btn.textContent = "Alerts are on";
   }
@@ -1997,6 +2368,56 @@ function mergeMembers(chat, list, ts) {
       return;
     }
     if (action === "chat-menu") return openChatMenu();
+    if (action === "call") return openCall(chat);
+    if (action === "call-person") return placeCall(target.dataset.code, target.dataset.name || "");
+    if (action === "call-answer") return answerCall();
+    if (action === "call-decline") return declineCall();
+    if (action === "call-hangup") return hangUp();
+    if (action === "call-mute") return toggleMute();
+    if (action === "fire") {
+      if (!chat) return;
+      openSheet("Fire", [
+        el("p", null, "Delete every message in this chat on this phone?"),
+        el("button", { type: "button", class: "btn danger full", "data-action": "fire-go" }, "Delete all messages"),
+      ]);
+      return;
+    }
+    if (action === "fire-go") {
+      if (chat) burnMessages(chat);
+      return;
+    }
+    if (action === "select-more") {
+      const found = findPicked();
+      if (found) beginSelect(found.msg.id);
+      return;
+    }
+    if (action === "select-cancel") {
+      selecting = false;
+      selected = new Set();
+      if (chat) renderLog(chat, "auto", false);
+      updateSelectBar();
+      return;
+    }
+    if (action === "select-delete") {
+      if (!chat) return;
+      selectedMessages(chat).forEach((msg) => { msg.hidden = true; });
+      selecting = false;
+      selected = new Set();
+      persist();
+      renderLog(chat, "auto", false);
+      updateSelectBar();
+      return;
+    }
+    if (action === "select-delete-all") {
+      if (!chat) return;
+      if (!arm(target, "Tap again")) return;
+      const mine = selectedMessages(chat).filter((msg) => msg.mine && !msg.deleted);
+      selecting = false;
+      selected = new Set();
+      updateSelectBar();
+      mine.reduce((chain, msg) => chain.then(() => deleteEverywhere(chat, msg)), Promise.resolve());
+      return;
+    }
     if (action === "pick") {
       const sel = window.getSelection && String(window.getSelection());
       if (sel) return;
@@ -2097,6 +2518,7 @@ function mergeMembers(chat, list, ts) {
       persist();
       closeSheet();
       softRefresh();
+      schedulePush();
       if (currentRoute().name === "info") renderInfo(chat.id);
       return;
     }
@@ -2133,7 +2555,13 @@ function mergeMembers(chat, list, ts) {
   function bind() {
     document.body.addEventListener("click", onClick);
     $("sheet").addEventListener("click", (event) => { if (event.target.id === "sheet") closeSheet(); });
-    window.addEventListener("hashchange", () => { closeSheet(); pickId = ""; render(); });
+    window.addEventListener("hashchange", () => {
+      closeSheet();
+      pickId = "";
+      selecting = false;
+      selected = new Set();
+      render();
+    });
     $("search").addEventListener("input", () => { $("list").scrollTop = 0; renderList(); });
     $("my-name").addEventListener("input", () => {
       state.me.name = $("my-name").value.replace(/[\u0000-\u001f]/g, "").slice(0, 32);
@@ -2297,12 +2725,13 @@ function mergeMembers(chat, list, ts) {
     render();
     sync().catch(() => updateNet());
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("sw.js").catch(() => {});
+      navigator.serviceWorker.register("sw.js").then(() => schedulePush()).catch(() => {});
       navigator.serviceWorker.addEventListener("message", (event) => {
+        if (event.data && event.data.renewPush) schedulePush();
         if (event.data && event.data.open) go("c/" + encodeURIComponent(event.data.open));
       });
     }
-    window.Fawlty = {
+    window.Lockbox = window.Fawlty = {
       get state() { return state; },
       pretty, classifyCode, userTopic, groupTopic,
     };
