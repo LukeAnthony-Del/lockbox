@@ -1,15 +1,15 @@
 /* Lockbox
-   Each device listens on ntfy topic fawlty-u-CODE.
+   Each device listens on ntfy topic lockbox-u-CODE.
    Direct messages are published to the other person's topic.
-   Each group uses fawlty-g-CODE. Members publish there once.
+   Each group uses lockbox-g-CODE. Members publish there once.
    Payloads are JSON objects with v:1. */
 (function () {
   "use strict";
 
-  const STORAGE_KEY = "fawlty-messages-v1";
+  const STORAGE_KEY = "lockbox-v1";
   const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  const USER_PREFIX = "fawlty-u-";
-  const GROUP_PREFIX = "fawlty-g-";
+  const USER_PREFIX = "lockbox-u-";
+  const GROUP_PREFIX = "lockbox-g-";
   const REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
   const EMOJIS = ["😀", "😁", "😂", "🤣", "😊", "😍", "😘", "😭", "👍", "👎", "❤️", "🔥", "🎉", "🙏", "😮", "😢", "😎", "🤝", "✅", "👀", "💯", "🏨", "🔔", "☕"];
   const PALETTE = ["#111214", "#3b4a6b", "#2f6f5e", "#6b4a3a", "#5c3d55", "#3d5a4a", "#4a5568", "#1f3a4d"];
@@ -105,12 +105,12 @@
 
   function classifyCode(input) {
     const raw = String(input || "").trim().toUpperCase();
-    const group = raw.includes("FAWLTY-G-") || /^G[: ]/.test(raw);
+    const group = raw.includes("LOCKBOX-G-") || /^G[: ]/.test(raw);
     let s = raw.replace(/^HTTPS?:\/\/(?:WWW\.)?NTFY\.SH\//, "");
-    s = s.replace(/^FAWLTY-U-/, "").replace(/^FAWLTY-G-/, "");
+    s = s.replace(/^LOCKBOX-U-/, "").replace(/^LOCKBOX-G-/, "");
     s = s.replace(/[^A-Z0-9]/g, "");
-    if (s.length > 8 && s.startsWith("FAWLTYU")) s = s.slice(7);
-    if (s.length > 8 && s.startsWith("FAWLTYG")) s = s.slice(7);
+    if (s.length > 8 && s.startsWith("LOCKBOXU")) s = s.slice(8);
+    if (s.length > 8 && s.startsWith("LOCKBOXG")) s = s.slice(8);
     if (!isCode(s)) return { code: "", group };
     return { code: s, group };
   }
@@ -1667,6 +1667,7 @@ function mergeMembers(chat, list, ts) {
   function currentRoute() {
     const raw = location.hash.replace(/^#\/?/, "");
     try {
+      if (raw === "v" || raw === "vault") return { name: "vault", id: "" };
       if (raw.startsWith("c/")) return { name: "chat", id: decodeURIComponent(raw.slice(2)) };
       if (raw.startsWith("i/")) return { name: "info", id: decodeURIComponent(raw.slice(2)) };
     } catch (e) { /* bad hash */ }
@@ -2020,10 +2021,20 @@ function mergeMembers(chat, list, ts) {
     $("view-list").hidden = route.name !== "list";
     $("view-chat").hidden = route.name !== "chat";
     $("view-info").hidden = route.name !== "info";
+    $("view-vault").hidden = route.name !== "vault";
+    const showTabs = route.name === "list" || route.name === "vault";
+    $("tabs").hidden = !showTabs;
+    $("tab-messages").classList.toggle("on", route.name === "list");
+    $("tab-vault").classList.toggle("on", route.name === "vault");
+    if (route.name === "list") $("tab-messages").setAttribute("aria-current", "page");
+    else $("tab-messages").removeAttribute("aria-current");
+    if (route.name === "vault") $("tab-vault").setAttribute("aria-current", "page");
+    else $("tab-vault").removeAttribute("aria-current");
     if (route.name === "list") {
       document.title = titleCount();
       renderList();
     } else if (route.name === "chat") renderChat(route.id);
+    else if (route.name === "vault") renderVault();
     else renderInfo(route.id);
     updateBadge();
   }
@@ -2225,7 +2236,7 @@ function mergeMembers(chat, list, ts) {
   function joinFromSheet() {
     const input = $("join-code");
     const raw = (input && input.value || "").toUpperCase();
-    if (raw.includes("FAWLTY-U-")) { toast("That’s a personal code. Start a direct message instead."); return; }
+    if (raw.includes("LOCKBOX-U-")) { toast("That’s a personal code. Start a direct message instead."); return; }
     const parsed = classifyCode(raw);
     if (!parsed.code) { toast("Enter a group code like ABCD-EFGH."); return; }
     joinGroup(parsed.code);
@@ -2324,6 +2335,15 @@ function mergeMembers(chat, list, ts) {
     }
     const action = target.dataset.action;
     const chat = activeChat();
+    if (action === "tab-messages") return go("/");
+    if (action === "tab-vault") return go("v");
+    if (action === "vault-unlock") return unlockVault();
+    if (action === "vault-pick") { const input = $("vault-file"); if (input) input.click(); return; }
+    if (action === "vault-download") return downloadVaultFile(target.dataset.id);
+    if (action === "vault-delete") {
+      if (!arm(target, "Tap again")) return;
+      return deleteVaultFile(target.dataset.id);
+    }
     if (action === "new") return openNewMenu();
     if (action === "details") return openDetails();
     if (action === "sheet-dm") return openDmSheet();
@@ -2340,7 +2360,7 @@ function mergeMembers(chat, list, ts) {
       return;
     }
     if (action === "install-hide") {
-      sessionStorage.setItem("fawlty-install-hide", "1");
+      sessionStorage.setItem("lockbox-install-hide", "1");
       $("install").hidden = true;
       return;
     }
@@ -2574,6 +2594,14 @@ function mergeMembers(chat, list, ts) {
       });
       persist();
     });
+    $("vault-file").addEventListener("change", () => {
+      const file = $("vault-file").files && $("vault-file").files[0];
+      $("vault-file").value = "";
+      if (file) storeVaultFile(file);
+    });
+    $("vault-pass").addEventListener("keydown", (event) => {
+      if (event.key === "Enter") { event.preventDefault(); unlockVault(); }
+    });
     $("composer").addEventListener("submit", (event) => {
       event.preventDefault();
       const route = currentRoute();
@@ -2675,13 +2703,13 @@ function mergeMembers(chat, list, ts) {
     window.addEventListener("beforeinstallprompt", (event) => {
       event.preventDefault();
       deferredPrompt = event;
-      if (sessionStorage.getItem("fawlty-install-hide") !== "1") $("install").hidden = false;
+      if (sessionStorage.getItem("lockbox-install-hide") !== "1") $("install").hidden = false;
     });
   }
 
   function setupInstall() {
     const standalone = matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
-    if (standalone || sessionStorage.getItem("fawlty-install-hide") === "1") return;
+    if (standalone || sessionStorage.getItem("lockbox-install-hide") === "1") return;
     $("install").hidden = false;
   }
 
@@ -2713,6 +2741,191 @@ function mergeMembers(chat, list, ts) {
     }
   }
 
+  let vaultKey = null;
+
+  function openVaultDb() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open("lockbox-vault", 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains("meta")) db.createObjectStore("meta");
+        if (!db.objectStoreNames.contains("files")) db.createObjectStore("files", { keyPath: "id" });
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  function vaultReq(store, mode, run) {
+    return openVaultDb().then((db) => new Promise((resolve, reject) => {
+      const tx = db.transaction(store, mode);
+      const req = run(tx.objectStore(store));
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    }));
+  }
+
+  async function deriveVaultKey(pass, salt) {
+    const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pass), "PBKDF2", false, ["deriveKey"]);
+    return crypto.subtle.deriveKey(
+      { name: "PBKDF2", salt, iterations: 120000, hash: "SHA-256" },
+      base,
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["encrypt", "decrypt"]
+    );
+  }
+
+  async function vaultSeal(key, bytes) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const data = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, bytes);
+    return { iv, data };
+  }
+
+  function vaultOpen(key, iv, data) {
+    return crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, data);
+  }
+
+  const VAULT_MARK = new TextEncoder().encode("lockbox-vault-ok");
+
+  async function unlockVault() {
+    const pass = $("vault-pass").value;
+    if (pass.length < 4) { toast("Use at least 4 characters."); return; }
+    const button = $("vault-unlock");
+    button.disabled = true;
+    try {
+      let meta = await vaultReq("meta", "readonly", (store) => store.get("key"));
+      if (!meta) {
+        const salt = crypto.getRandomValues(new Uint8Array(16));
+        const key = await deriveVaultKey(pass, salt);
+        const sealed = await vaultSeal(key, VAULT_MARK);
+        meta = { salt, iv: sealed.iv, check: sealed.data };
+        await vaultReq("meta", "readwrite", (store) => store.put(meta, "key"));
+        vaultKey = key;
+        toast("Vault created.");
+      } else {
+        const key = await deriveVaultKey(pass, meta.salt);
+        let plain;
+        try { plain = new Uint8Array(await vaultOpen(key, meta.iv, meta.check)); }
+        catch (e) { toast("That passphrase doesn’t open the vault."); return; }
+        const match = plain.length === VAULT_MARK.length && plain.every((byte, i) => byte === VAULT_MARK[i]);
+        if (!match) { toast("That passphrase doesn’t open the vault."); return; }
+        vaultKey = key;
+      }
+      $("vault-pass").value = "";
+      renderVault();
+    } catch (e) {
+      toast("Couldn’t open the vault.");
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  function formatBytes(n) {
+    if (n < 1024) return n + " B";
+    if (n < 1024 * 1024) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + " KB";
+    return (n / (1024 * 1024)).toFixed(1) + " MB";
+  }
+
+  async function paintVaultFiles() {
+    const rows = await vaultReq("files", "readonly", (store) => store.getAll());
+    const list = $("vault-list");
+    const files = (rows || []).slice().sort((a, b) => (b.created || 0) - (a.created || 0));
+    list.replaceChildren();
+    if (!files.length) {
+      list.append(el("div", { class: "empty" }, [
+        el("h2", null, "Nothing in the vault"),
+        el("p", null, "Upload a file and Lockbox encrypts it here."),
+      ]));
+      return;
+    }
+    files.forEach((file) => {
+      list.append(el("div", { class: "vault-row" }, [
+        el("div", { class: "row-main" }, [
+          el("strong", null, file.name || "File"),
+          el("span", null, formatBytes(file.size || 0)),
+        ]),
+        el("button", { type: "button", class: "text-btn", "data-action": "vault-download", "data-id": file.id }, "Download"),
+        el("button", { type: "button", class: "text-btn danger", "data-action": "vault-delete", "data-id": file.id }, "Delete"),
+      ]));
+    });
+  }
+
+  async function renderVault() {
+    document.title = "Vault · Lockbox";
+    let meta = null;
+    try { meta = await vaultReq("meta", "readonly", (store) => store.get("key")); }
+    catch (e) { toast("Couldn’t open the vault."); }
+    const copy = $("vault-lock-copy");
+    const button = $("vault-unlock");
+    if (copy) {
+      copy.textContent = meta
+        ? "Enter the passphrase to unlock files on this phone."
+        : "Choose a passphrase. Lockbox uses it to encrypt files in this vault. It cannot be recovered if you forget it.";
+    }
+    if (button) button.textContent = meta ? "Unlock" : "Create vault";
+    const locked = !vaultKey;
+    $("vault-lock").hidden = !locked;
+    $("vault-body").hidden = locked;
+    if (!locked) {
+      try { await paintVaultFiles(); }
+      catch (e) { toast("Couldn’t read the vault."); }
+    }
+  }
+
+  async function storeVaultFile(file) {
+    if (!vaultKey) { toast("Unlock the vault first."); return; }
+    if (file.size > 80 * 1024 * 1024) { toast("That file is over 80 MB."); return; }
+    toast("Encrypting…");
+    try {
+      const bytes = await file.arrayBuffer();
+      const sealed = await vaultSeal(vaultKey, bytes);
+      await vaultReq("files", "readwrite", (store) => store.put({
+        id: uid(),
+        name: file.name || "File",
+        type: file.type || "application/octet-stream",
+        size: file.size,
+        created: Date.now(),
+        iv: sealed.iv,
+        data: sealed.data,
+      }));
+      toast("Encrypted and saved in the vault.");
+      if (currentRoute().name === "vault") paintVaultFiles();
+    } catch (e) {
+      toast("Couldn’t encrypt that file.");
+    }
+  }
+
+  async function downloadVaultFile(id) {
+    if (!vaultKey) return;
+    try {
+      const file = await vaultReq("files", "readonly", (store) => store.get(id));
+      if (!file) return;
+      const plain = await vaultOpen(vaultKey, file.iv, file.data);
+      const blob = new Blob([plain], { type: file.type || "application/octet-stream" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = file.name || "file";
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+    } catch (e) {
+      toast("Couldn’t decrypt that file.");
+    }
+  }
+
+  async function deleteVaultFile(id) {
+    try {
+      await vaultReq("files", "readwrite", (store) => store.delete(id));
+      toast("Deleted from this phone.");
+      paintVaultFiles();
+    } catch (e) {
+      toast("Couldn’t delete that file.");
+    }
+  }
+
   function boot() {
     state = loadState();
     seedSeen();
@@ -2731,7 +2944,7 @@ function mergeMembers(chat, list, ts) {
         if (event.data && event.data.open) go("c/" + encodeURIComponent(event.data.open));
       });
     }
-    window.Lockbox = window.Fawlty = {
+    window.Lockbox = {
       get state() { return state; },
       pretty, classifyCode, userTopic, groupTopic,
     };

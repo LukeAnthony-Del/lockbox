@@ -1,4 +1,4 @@
-const CACHE = "fawlty-messages-v3";
+const CACHE = "lockbox-v4";
 let meta = { me: "", muted: [] };
 
 async function loadMeta() {
@@ -27,7 +27,7 @@ self.addEventListener("install", (event) => {
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))))
+    caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE && key !== "lockbox-meta").map((key) => caches.delete(key))))
   );
   self.clients.claim();
 });

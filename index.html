@@ -98,6 +98,25 @@
         </div>
       </section>
 
+      <section id="view-vault" class="view" hidden>
+        <header class="top">
+          <h1><span class="mark">Vault</span></h1>
+        </header>
+        <div id="vault-lock" class="vault-lock">
+          <p id="vault-lock-copy"></p>
+          <label class="field">Passphrase
+            <input id="vault-pass" type="password" autocomplete="current-password" placeholder="Passphrase" aria-label="Passphrase" />
+          </label>
+          <button type="button" id="vault-unlock" class="btn full" data-action="vault-unlock">Unlock</button>
+        </div>
+        <div id="vault-body" class="vault-body" hidden>
+          <button type="button" class="btn full" data-action="vault-pick">Upload a file</button>
+          <input id="vault-file" type="file" hidden />
+          <p class="vault-note">Files stay encrypted on this phone. Download or delete them here.</p>
+          <div id="vault-list" class="list"></div>
+        </div>
+      </section>
+
       <section id="view-info" class="view" hidden>
         <header class="top">
           <button type="button" class="icon-btn" data-action="back" data-icon="back" aria-label="Back"></button>
@@ -105,6 +124,11 @@
         </header>
         <div id="info" class="info"></div>
       </section>
+
+      <nav id="tabs" class="tabs">
+        <button type="button" id="tab-messages" data-action="tab-messages">Messages</button>
+        <button type="button" id="tab-vault" data-action="tab-vault">Vault</button>
+      </nav>
 
       <div id="sheet" class="sheet" hidden>
         <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
